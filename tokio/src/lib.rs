@@ -542,6 +542,11 @@ cfg_process! {
 ))]
 mod blocking;
 
+// iSH-AOK embedded mode: per-invocation replacements for the process-global
+// signal/process state. See the module's own comment.
+#[cfg(all(unix, feature = "aok-embedded"))]
+mod aok_embedded;
+
 cfg_rt! {
     pub mod runtime;
 }

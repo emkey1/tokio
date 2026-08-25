@@ -25,6 +25,13 @@ keywords = ["io", "async", "non-blocking", "futures"]
 # Include nothing by default
 default = []
 
+# iSH-AOK embedded mode: key the process-global signal/process state by the
+# native-program invocation that created it, because in iSH-AOK many program
+# runs share one host process and fds are scoped to each run's guest task.
+# Links against nlibc_invocation_token() from iSH-AOK's libc shim, so this
+# only builds inside an iSH-AOK app link. See src/aok_embedded.rs.
+aok-embedded = []
+
 # enable everything
 full = [
   "fs",

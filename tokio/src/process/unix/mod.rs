@@ -64,7 +64,21 @@ impl Kill for StdChild {
     }
 }
 
+// iSH-AOK embedded mode: the orphan queue holds children of ONE
+// native-program run's guest task. A process-wide queue would let a later run
+// try to reap pids that belonged to an earlier task — routed through the
+// current task, those numbers may name someone else's children. One queue per
+// invocation token; see crate::aok_embedded.
+#[cfg(feature = "aok-embedded")]
+fn get_orphan_queue() -> &'static OrphanQueueImpl<StdChild> {
+    static ORPHAN_QUEUE: crate::aok_embedded::PerInvocation<OrphanQueueImpl<StdChild>> =
+        crate::aok_embedded::PerInvocation::new();
+
+    ORPHAN_QUEUE.get_or_init(OrphanQueueImpl::new)
+}
+
 cfg_not_has_const_mutex_new! {
+    #[cfg(not(feature = "aok-embedded"))]
     fn get_orphan_queue() -> &'static OrphanQueueImpl<StdChild> {
         use std::sync::OnceLock;
 
@@ -75,6 +89,7 @@ cfg_not_has_const_mutex_new! {
 }
 
 cfg_has_const_mutex_new! {
+    #[cfg(not(feature = "aok-embedded"))]
     fn get_orphan_queue() -> &'static OrphanQueueImpl<StdChild> {
         static ORPHAN_QUEUE: OrphanQueueImpl<StdChild> = OrphanQueueImpl::new();
 

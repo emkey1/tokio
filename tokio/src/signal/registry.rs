@@ -3,6 +3,7 @@ use crate::sync::watch;
 
 use std::ops;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(all(unix, feature = "aok-embedded")))]
 use std::sync::OnceLock;
 
 pub(crate) type EventId = usize;
@@ -153,12 +154,31 @@ where
     }
 }
 
+#[cfg(not(all(unix, feature = "aok-embedded")))]
 pub(crate) fn globals() -> &'static Globals
 where
     OsExtraData: 'static + Send + Sync + Default,
     OsStorage: 'static + Send + Sync + Default,
 {
     static GLOBALS: OnceLock<Globals> = OnceLock::new();
+
+    GLOBALS.get_or_init(globals_init)
+}
+
+// iSH-AOK embedded mode: `Globals` holds the signal wakeup socketpair and the
+// per-signal registration state, all of which is scoped to one native-program
+// run — its fds die with the run's guest task, and the next run's task must
+// register its own handlers. One instance per invocation token; see
+// crate::aok_embedded for why previous instances are leaked rather than
+// dropped.
+#[cfg(all(unix, feature = "aok-embedded"))]
+pub(crate) fn globals() -> &'static Globals
+where
+    OsExtraData: 'static + Send + Sync + Default,
+    OsStorage: 'static + Send + Sync + Default,
+{
+    static GLOBALS: crate::aok_embedded::PerInvocation<Globals> =
+        crate::aok_embedded::PerInvocation::new();
 
     GLOBALS.get_or_init(globals_init)
 }
