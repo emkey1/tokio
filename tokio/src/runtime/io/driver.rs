@@ -21,6 +21,12 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// iSH-AOK: how many polls may fail in a row before it is a panic after all.
+/// With the pauses in `turn` (2, 4, ... 64 ms and then 64 ms each) that is
+/// a little over two seconds.
+#[cfg(all(unix, feature = "aok-embedded"))]
+const AOK_POLL_FAILURE_LIMIT: u32 = 36;
+
 /// I/O driver, backed by Mio.
 pub(crate) struct Driver {
     /// True when an event with the signal token is received
@@ -31,6 +37,10 @@ pub(crate) struct Driver {
 
     /// The system event queue.
     poll: mio::Poll,
+
+    /// iSH-AOK: polls that have failed in a row. See `turn`.
+    #[cfg(all(unix, feature = "aok-embedded"))]
+    aok_poll_failures: u32,
 }
 
 /// A reference to an I/O driver.
@@ -124,6 +134,8 @@ impl Driver {
             signal_ready: false,
             events: mio::Events::with_capacity(nevents),
             poll,
+            #[cfg(all(unix, feature = "aok-embedded"))]
+            aok_poll_failures: 0,
         };
 
         let (registrations, synced) = RegistrationSet::new();
@@ -186,8 +198,30 @@ impl Driver {
         // Block waiting for an event to happen, peeling out how many events
         // happened.
         match self.poll.poll(events, max_wait) {
+            #[cfg(not(all(unix, feature = "aok-embedded")))]
             Ok(()) => {}
+            #[cfg(all(unix, feature = "aok-embedded"))]
+            Ok(()) => self.aok_poll_failures = 0,
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+            // iSH-AOK: the reactor here is not the kernel's kqueue but a shim
+            // over the guest's ppoll (kernel/native_kqueue.c), and that can
+            // fail for a moment where a kernel's would not -- no memory for
+            // its descriptor list, say. Upstream's answer below, a panic, is
+            // right for an error that means the queue is broken; in a program
+            // that is a function inside an app it ended an editing session
+            // (and, before abort() was routed, the app: build 558's crash
+            // report from an iPad). So a failed poll is first taken for what a
+            // spurious wake-up is: no events, look again -- after a pause that
+            // doubles, so that a failure which does not go away costs a few
+            // dozen calls and about two seconds, and then is the panic it
+            // always was.
+            #[cfg(all(unix, feature = "aok-embedded"))]
+            Err(_) if self.aok_poll_failures < AOK_POLL_FAILURE_LIMIT => {
+                self.aok_poll_failures += 1;
+                events.clear();
+                let pause = 1u64 << self.aok_poll_failures.min(6);
+                std::thread::sleep(Duration::from_millis(pause));
+            }
             #[cfg(target_os = "wasi")]
             Err(e) if e.kind() == io::ErrorKind::InvalidInput => {
                 // In case of wasm32_wasi this error happens, when trying to poll without subscriptions
